@@ -6,3 +6,4 @@ output/
 input/*.docling.json
 *.egg-info/
 .pytest_cache/
+.DS_Store
