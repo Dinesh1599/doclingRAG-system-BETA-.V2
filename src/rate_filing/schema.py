@@ -29,10 +29,6 @@ DATA_START_ROW = 5
 # Kept for excel_writer compatibility; bill-pay rows carry Company explicitly.
 METADATA_COLUMNS: list[str] = []
 
-# Retained only so the now-unused legacy modules (validators.py etc.) still
-# import cleanly until they are removed. Not used by the bill-pay pipeline.
-MBI_CODE_DOMAIN = {"01", "02", "03", "04", "05", "06", "Prohibited"}
-
 # Allowed values for the Fee Type column (open-ended; "Other" catches the rest).
 FEE_TYPES = ["Installment", "NSF", "Late", "Renewal", "Other"]
 
