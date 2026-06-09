@@ -1,0 +1,30 @@
+[project]
+name = "rate-filing"
+version = "0.1.0"
+description = "Carrier-agnostic insurance rate-filing PDF -> structured Excel pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "openai>=1.40",
+    "openpyxl>=3.1",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "pypdf>=4.2",
+    "pdfplumber>=0.11",
+]
+
+[project.optional-dependencies]
+airflow = ["apache-airflow>=3.0"]
+
+[project.scripts]
+rate-filing = "rate_filing.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rate_filing"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
