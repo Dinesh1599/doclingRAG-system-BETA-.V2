@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bill-Pay RAG Chat</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --me:#2563eb; --bot:#222733;
+          --txt:#e6e8ec; --muted:#8b93a1; --accent:#4ade80; --border:#272c36; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;
+         background:var(--bg); color:var(--txt); height:100vh; display:flex; flex-direction:column; }
+  header { padding:14px 20px; border-bottom:1px solid var(--border); background:var(--panel); }
+  header h1 { margin:0; font-size:16px; } header p { margin:2px 0 0; color:var(--muted); font-size:12px; }
+  #log { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px; }
+  .msg { max-width:760px; padding:12px 14px; border-radius:12px; white-space:pre-wrap; word-wrap:break-word; }
+  .me { align-self:flex-end; background:var(--me); color:#fff; border-bottom-right-radius:3px; }
+  .bot { align-self:flex-start; background:var(--bot); border-bottom-left-radius:3px; }
+  .sources { margin-top:10px; border-top:1px solid var(--border); padding-top:8px; font-size:12.5px; }
+  .sources summary { cursor:pointer; color:var(--accent); }
+  .src { margin:6px 0; color:var(--muted); }
+  .src b { color:var(--txt); }
+  .hint { color:var(--muted); font-size:12px; }
+  form { display:flex; gap:10px; padding:14px 20px; border-top:1px solid var(--border); background:var(--panel); }
+  input { flex:1; padding:11px 14px; border-radius:10px; border:1px solid var(--border);
+          background:#0d0f13; color:var(--txt); font-size:15px; }
+  button { padding:11px 18px; border:0; border-radius:10px; background:var(--me); color:#fff;
+           font-weight:600; cursor:pointer; } button:disabled { opacity:.5; cursor:default; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Bill-Pay RAG Chat</h1>
+    <p>Ask about payment plans, downpayments, installments &amp; fees — answered from the Postgres vector store (chunks + bill_pay).</p>
+  </header>
+  <div id="log">
+    <div class="msg bot">Hi! Ask me about the bill-pay data, e.g. <i>“What payment plans does GEICO offer?”</i> or <i>“What is Progressive’s NSF fee?”</i></div>
+  </div>
+  <form id="form">
+    <input id="q" placeholder="Ask a question…" autocomplete="off" autofocus />
+    <button id="send" type="submit">Send</button>
+  </form>
+<script>
+const log = document.getElementById('log'), form = document.getElementById('form'),
+      q = document.getElementById('q'), send = document.getElementById('send');
+
+function add(text, cls) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+function addSources(el, sources) {
+  if (!sources || !sources.length) return;
+  const det = document.createElement('details'); det.className = 'sources';
+  const sum = document.createElement('summary'); sum.textContent = sources.length + ' source chunk(s)';
+  det.appendChild(sum);
+  for (const s of sources) {
+    const r = document.createElement('div'); r.className = 'src';
+    r.innerHTML = `<b>chunk ${s.id}</b> · ${s.source} p${s.page} · sim ${s.similarity}<br>${s.snippet.replace(/</g,'&lt;')}`;
+    det.appendChild(r);
+  }
+  el.appendChild(det); log.scrollTop = log.scrollHeight;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = q.value.trim(); if (!text) return;
+  add(text, 'me'); q.value = ''; send.disabled = true;
+  const thinking = add('…thinking', 'bot');
+  try {
+    const res = await fetch('/chat', { method:'POST', headers:{'Content-Type':'application/json'},
+                                       body: JSON.stringify({ question: text }) });
+    const data = await res.json();
+    if (data.error) { thinking.textContent = '⚠ ' + data.error; }
+    else { thinking.textContent = data.answer; addSources(thinking, data.sources); }
+  } catch (err) { thinking.textContent = '⚠ request failed: ' + err; }
+  finally { send.disabled = false; q.focus(); }
+});
+</script>
+</body>
+</html>

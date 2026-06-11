@@ -62,12 +62,16 @@ _SCHEMA = {
                     "Downpayment Unit": {"type": "string"},  # %, $, ...
                     "Each Installment Value": {"type": "string"},
                     "Each Installment Unit": {"type": "string"},
+                    "Effective Date": {"type": "string"},    # when the rule/section takes effect
+                    "End Date": {"type": "string"},          # sunset/expiration; usually blank
+                    "Source Page": {"type": "integer"},      # page this row's info appears on
                     "Accuracy Score": {"type": "number"},    # 0..1 confidence
                 },
                 "required": ["Company", "Fee Type", "Payment Plan", "Fee",
                              "Eligibility Rule", "Downpayment Amount",
                              "Downpayment Unit", "Each Installment Value",
-                             "Each Installment Unit", "Accuracy Score"],
+                             "Each Installment Unit", "Effective Date", "End Date",
+                             "Source Page", "Accuracy Score"],
             },
         }
     },
@@ -84,10 +88,29 @@ _SYSTEM = (
     "Copy numbers EXACTLY as written (do not compute or round). Put the numeric "
     "amount in *Amount/Value and the unit ('%','$','months', etc.) in *Unit. "
     "If installments within a plan are not uniform, give the representative "
-    "(first) installment and LOWER the Accuracy Score. Leave a field blank if it "
-    "is not stated. Accuracy Score is your confidence in the row, 0..1. If a page "
-    "has no bill-pay content, return no rows for it."
+    "(first) installment and LOWER the Accuracy Score.\n"
+    "Effective Date: the date the rule/section takes effect if shown on the page "
+    "(e.g. a header 'Effective 03/01/2014' or 'Effective: September 21, 2018'); "
+    "copy it as written. End Date: the rule's sunset/expiration date ONLY if "
+    "explicitly stated (rate filings rarely print one — leave it blank otherwise; "
+    "do NOT use a policy expiration date).\n"
+    "Source Page: the exact page number this row's information appears on, taken "
+    "from the '--- PAGE N ---' marker above that text. If the row's details span "
+    "two pages, use the page where the plan/fee is defined. It MUST be one of the "
+    "page numbers shown.\n"
+    "Leave a field blank if it is not stated. Accuracy Score is your confidence "
+    "in the row, 0..1. If a page has no bill-pay content, return no rows for it."
 )
+
+
+def _resolve_page(value, batch: list[int]) -> int:
+    """The LLM's cited page if it's one of the batch's pages, else the batch's
+    first page (defensive against a missing/hallucinated page number)."""
+    try:
+        pg = int(value)
+    except (TypeError, ValueError):
+        return batch[0]
+    return pg if pg in batch else batch[0]
 
 
 def extract_billpay(doc: dict, pages: list[int], company_hint: str,
@@ -119,7 +142,8 @@ def extract_billpay(doc: dict, pages: list[int], company_hint: str,
             except (TypeError, ValueError):
                 acc = 0.0
             r["Accuracy Score"] = round(max(0.0, min(1.0, acc)), 2)
-            r["Source Page"] = src
+            # per-row page the LLM cited, validated to be one of the batch pages
+            r["Source Page"] = str(_resolve_page(r.get("Source Page"), batch))
             rows.append(r)
         log(f"[billpay] pages {src}: +{len(res.get('rows', []))} rows")
     return rows

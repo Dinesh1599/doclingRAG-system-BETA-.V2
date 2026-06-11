@@ -9,8 +9,7 @@ from rate_filing.schema import HEADER_ROW, SHEETS, SHEET_NAMES
 
 
 def test_all_sheets_and_columns_present(tmp_path: Path):
-    md = {"Company": "X", "NAIC": "1", "State": "NJ", "Line": "PPA"}
-    out = write_workbook(tmp_path / "wb.xlsx", md, {})
+    out = write_workbook(tmp_path / "wb.xlsx", {})
     wb = openpyxl.load_workbook(out)
     assert wb.sheetnames == SHEET_NAMES
     for spec in SHEETS:

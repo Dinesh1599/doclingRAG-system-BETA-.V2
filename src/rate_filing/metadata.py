@@ -1,10 +1,10 @@
 """Detect the filing's identity: companies, State, Line + deterministic codes.
 
 A filing may cover several companies (e.g. Progressive Garden State + Drive New
-Jersey), so the LLM returns a LIST of companies plus State/Line. All numeric
-codes (NAIC, SERFF, RFC) are read deterministically by regex -- never by the
-LLM. The cover is often a multi-column grid, so we feed the LLM the first pages'
-raw text and let it pull the legal names.
+Jersey), so the LLM returns a LIST of companies plus State/Line. The filing
+codes (SERFF, RFC) are read deterministically by regex -- never by the LLM. The
+cover is often a multi-column grid, so we feed the LLM the first pages' raw text
+and let it pull the legal names.
 """
 
 import re
@@ -46,11 +46,27 @@ _SYSTEM = (
     "numeric codes. If a field is absent, use an empty string and lower confidence."
 )
 
-_NAIC_RE = re.compile(r"NAIC[^0-9]{0,12}(\d{4,5})", re.IGNORECASE)
 _SERFF_RE = re.compile(r"\b([A-Z]{3,5}-\d{8,})\b")
-# Require a digit in the code so a stray header word ("LAST", "UPDATE") on the
-# cover's grid layout is not mistaken for an RFC number.
-_RFC_RE = re.compile(r"\bRFC\s*#?\s*:?\s*([A-Z]{0,4}\d[A-Z0-9\-]{2,})", re.IGNORECASE)
+# RFC # = the ratefilings.com library code (e.g. "NJP61989"), not the SERFF
+# tracking number. It appears two ways on a cover: inline ("RFC #: ABC1234") or
+# in the grid under a "LIBRARY RFC #" header. The grid form needs a windowed
+# search because the value sits a couple of lines below the header.
+_RFC_INLINE_RE = re.compile(r"\bRFC\s*#\s*:\s*([A-Z]{2,4}\d{3,6})\b", re.IGNORECASE)
+_RFC_HEADER_RE = re.compile(r"LIBRARY\s+RFC\s*#", re.IGNORECASE)
+_RFC_CODE_RE = re.compile(r"\b([A-Z]{2,4}\d{4,6})\b")
+
+
+def _rfc_from_text(text: str) -> str:
+    """Ratefilings.com RFC/library code from the cover, or '' if none."""
+    m = _RFC_INLINE_RE.search(text)
+    if m:
+        return m.group(1)
+    h = _RFC_HEADER_RE.search(text)
+    if h:
+        m = _RFC_CODE_RE.search(text, h.end(), h.end() + 250)
+        if m:
+            return m.group(1)
+    return ""
 
 
 def _doc_text(doc: dict, max_pages: int = 6) -> str:
@@ -59,29 +75,20 @@ def _doc_text(doc: dict, max_pages: int = 6) -> str:
                      for t in doc_model.texts_on_pages(doc, p, p))
 
 
-def naic_from_doc(doc: dict) -> str | None:
-    """Deterministically read the NAIC code from document text (never LLM)."""
-    text = "\n".join(t.text for t in doc_model.texts(doc))
-    m = _NAIC_RE.search(text)
-    return m.group(1) if m else None
-
-
 def _codes_from_text(text: str) -> dict:
     serff = _SERFF_RE.search(text)
-    rfc = _RFC_RE.search(text)
     return {"SERFF #": serff.group(1) if serff else "",
-            "RFC #": rfc.group(1) if rfc else ""}
+            "RFC #": _rfc_from_text(text)}
 
 
 def detect(doc: dict, cfg: Config, max_pages: int = 6) -> dict:
-    """Return {'companies': [...], 'Company': primary, 'State','Line','NAIC',
-    'SERFF #','RFC #','confidence'}. NAIC/SERFF/RFC are deterministic."""
+    """Return {'companies': [...], 'Company': primary, 'State','Line',
+    'SERFF #','RFC #','confidence'}. SERFF/RFC are deterministic (regex)."""
     text = _doc_text(doc, max_pages)
     res = structured(cfg.model_classify, _SYSTEM,
                      f"First pages text:\n{text[:4000]}", _SCHEMA, "filing_identity")
     companies = [c for c in res.get("companies", []) if c.get("Company")]
     res["companies"] = companies
     res["Company"] = companies[0]["Company"] if companies else ""
-    res["NAIC"] = naic_from_doc(doc)               # deterministic, may be None
     res.update(_codes_from_text(text))             # deterministic SERFF/RFC
     return res
