@@ -1,7 +1,7 @@
 [project]
 name = "rate-filing"
 version = "0.1.0"
-description = "Carrier-agnostic insurance rate-filing PDF -> structured Excel pipeline"
+description = "Carrier-agnostic insurance rate-filing PDF -> bill-pay data + RAG (Postgres/pgvector)"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=1.40",
@@ -11,7 +11,11 @@ dependencies = [
     "pypdf>=4.2",
     "pdfplumber>=0.11",
     "docling>=2.100.0",
-    "ocrmac>=1.0.1",
+    # OCR engine is platform-dependent: Apple Vision on macOS (no model download),
+    # EasyOCR elsewhere (Windows/Linux, GPU-capable). DOCLING_OCR_ENGINE=auto picks
+    # the right one at runtime; these markers make `uv sync` install the right pkg.
+    "ocrmac>=1.0.1; sys_platform == 'darwin'",
+    "easyocr>=1.7; sys_platform != 'darwin'",
     "psycopg[binary]>=3.3.4",
     "pgvector>=0.4.2",
     "fastapi>=0.136.3",

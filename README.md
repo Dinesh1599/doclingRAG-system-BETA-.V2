@@ -64,9 +64,11 @@ uv sync                     # installs docling (+ torch) and the OCR engine
 cp .env.example .env        # fill in OPENAI_API_KEY
 ```
 
-No Docker needed — docling runs in-process. On macOS the default OCR engine is
-Apple Vision (`ocrmac`, installed by `uv sync`); on Windows/Linux set
-`DOCLING_OCR_ENGINE=easyocr` and `uv add easyocr`.
+No Docker needed for docling — it runs in-process. The OCR engine is selected
+automatically by platform: `uv sync` installs Apple Vision (`ocrmac`) on macOS
+and EasyOCR on Windows/Linux (platform markers in `pyproject.toml`), and
+`DOCLING_OCR_ENGINE=auto` picks the right one at runtime. (The vector store still
+needs a Postgres+pgvector container — see Vector store below.)
 
 Environment (`.env`): `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `LLM_MODEL_EXTRACT`
 (gpt-4o), `LLM_MODEL_CLASSIFY` (gpt-4o-mini), `DOCLING_OCR_ENGINE` (`auto`),
