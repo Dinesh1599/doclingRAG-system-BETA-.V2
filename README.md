@@ -127,8 +127,9 @@ id(s).
 
 ## Vector store (Postgres + pgvector)
 
-`docker run` a `pgvector/pgvector:pg16` image (this repo uses one on port 5436);
-set `DATABASE_URL`. The pipeline creates/uses three tables:
+Start the vector store with `docker compose up -d postgres` (pgvector on port
+5436; the `docker-compose.yml` service matches the default `DATABASE_URL`). The
+pipeline creates/uses three tables:
 
 | Table | What |
 |---|---|
