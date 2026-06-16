@@ -7,12 +7,19 @@ chunks (file + page) are returned and shown in a simple chat UI.
 
 Run:   uv run uvicorn rate_filing.chat_app:app --port 8000
 Open:  http://localhost:8000
+
+Optional HTTP basic auth (recommended before exposing publicly): set CHAT_PASSWORD
+(and optionally CHAT_USERNAME, default 'manager'). If CHAT_PASSWORD is unset, auth
+is disabled (fine for local use).
 """
 
+import os
+import secrets
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
 from . import clients, vectordb
@@ -21,6 +28,22 @@ from .config import Config
 app = FastAPI(title="Bill-Pay RAG Chat")
 _cfg = Config.from_env()
 _HTML = (Path(__file__).resolve().parent.parent.parent / "web" / "chat.html")
+
+_security = HTTPBasic(auto_error=False)
+
+
+def _require_auth(creds: HTTPBasicCredentials | None = Depends(_security)) -> None:
+    """Enforce HTTP basic auth when CHAT_PASSWORD is set; otherwise no-op."""
+    password = os.environ.get("CHAT_PASSWORD", "")
+    if not password:
+        return  # auth disabled (local use)
+    username = os.environ.get("CHAT_USERNAME", "manager")
+    ok = creds and secrets.compare_digest(creds.username, username) \
+        and secrets.compare_digest(creds.password, password)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"})
 
 _SYSTEM = (
     "You are an assistant for U.S. auto-insurance rate filings, focused on "
@@ -63,7 +86,7 @@ def _format(chunks, billpay) -> str:
     return f"=== BILL_PAY TABLE ===\n{bp}\n\n=== RETRIEVED DOCUMENT CHUNKS ===\n{docs}"
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(_require_auth)])
 def index() -> str:
     return _HTML.read_text()
 
@@ -73,7 +96,7 @@ def health() -> dict:
     return {"ok": True, "db": bool(_cfg.database_url), "key": bool(_cfg.openai_api_key)}
 
 
-@app.post("/chat")
+@app.post("/chat", dependencies=[Depends(_require_auth)])
 def chat(req: ChatRequest):
     q = (req.question or "").strip()
     if not q:
