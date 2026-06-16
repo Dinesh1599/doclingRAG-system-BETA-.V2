@@ -44,15 +44,26 @@ def _store_chunks(pdf: Path, doc: dict, cfg: Config, conn, log) -> list[tuple[in
     return chunk_pages
 
 
-def extract_rows(pdf: Path, cfg: Config, conn=None, log=print) -> tuple[list[dict], str, int]:
+def extract_rows(pdf: Path, cfg: Config, conn=None,
+                 log=print) -> tuple[list[dict], str, int, str | None]:
     """Extract Bill-Pay rows for one PDF, store chunks + rows in the vector DB,
     and link each row to its source chunk(s) by page. Returns (rows, company,
-    n_chunks)."""
+    n_chunks, skip_reason). skip_reason is set (and the file is NOT embedded or
+    extracted) when the document has no bill-pay content."""
     log(f"[ingest] {pdf.name} ({page_count(pdf)} pages)")
     doc = page_router.load_doc(pdf, cfg, log)   # cache-free: pdfplumber + selective OCR
 
-    company = ""
-    serff = rfc = ""
+    # Bill-pay content gate: a deterministic keyword scan runs FIRST. A filing
+    # with no bill-pay pages (e.g. a rate-level or rating-model change) is skipped
+    # here — before the expensive chunk/embed and LLM extraction — so we don't
+    # bloat the vector store with documents that carry no payment-plan content.
+    pages = billpay.find_billpay_pages(doc, log)
+    if not pages:
+        log(f"[billpay] {pdf.name}: no bill-pay candidate pages — skipping "
+            f"(no embedding/extraction)")
+        return [], "", 0, "no bill-pay content"
+
+    company = serff = rfc = ""
     if cfg.openai_api_key:
         try:
             det = metadata.detect(doc, cfg)
@@ -65,11 +76,10 @@ def extract_rows(pdf: Path, cfg: Config, conn=None, log=print) -> tuple[list[dic
 
     chunk_pages = _store_chunks(pdf, doc, cfg, conn, log)
 
-    pages = billpay.find_billpay_pages(doc, log)
     rows: list[dict] = []
     if not cfg.openai_api_key:
         log("[billpay] no OPENAI_API_KEY — cannot extract bill-pay rows")
-    elif pages:
+    else:
         rows = billpay.extract_billpay(doc, pages, company, cfg, log)
 
     for r in rows:
@@ -81,7 +91,7 @@ def extract_rows(pdf: Path, cfg: Config, conn=None, log=print) -> tuple[list[dic
     if conn is not None:
         vectordb.store_bill_pay(conn, pdf.name, rows, chunk_pages)   # sets r["Chunks"]
         log(f"[rag] {pdf.name}: stored {len(rows)} bill_pay rows linked to chunks")
-    return rows, company, len(chunk_pages)
+    return rows, company, len(chunk_pages), None
 
 
 def run(pdf_paths, cfg: Config | None = None, out_name: str = "bill_pay.xlsx",
@@ -128,7 +138,10 @@ def run(pdf_paths, cfg: Config | None = None, out_name: str = "bill_pay.xlsx",
     chunks_stored: dict[str, int] = {}
     try:
         for pdf in relevant:
-            rows, company, n_chunks = extract_rows(pdf, cfg, conn, log)
+            rows, company, n_chunks, skip_reason = extract_rows(pdf, cfg, conn, log)
+            if skip_reason:                       # no bill-pay content -> skip
+                skipped[pdf.name] = skip_reason
+                continue
             all_rows.extend(rows)
             per_file[pdf.name] = len(rows)
             companies[pdf.name] = company
