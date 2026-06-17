@@ -21,6 +21,15 @@
   .src { margin:6px 0; color:var(--muted); }
   .src b { color:var(--txt); }
   .hint { color:var(--muted); font-size:12px; }
+  #uploadbar { padding:10px 20px; border-bottom:1px solid var(--border); background:var(--panel);
+               display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  #uploadbtn { background:var(--bot); border:1px solid var(--border); color:var(--txt);
+               padding:7px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+  #uploadbtn:hover { border-color:var(--accent); }
+  #jobs { width:100%; display:flex; flex-direction:column; gap:4px; }
+  .job { font-size:12.5px; color:var(--muted); }
+  .job b { color:var(--txt); }
+  .job .done { color:var(--accent); } .job .err { color:#f87171; } .job .skip { color:#fbbf24; }
   form { display:flex; gap:10px; padding:14px 20px; border-top:1px solid var(--border); background:var(--panel); }
   input { flex:1; padding:11px 14px; border-radius:10px; border:1px solid var(--border);
           background:#0d0f13; color:var(--txt); font-size:15px; }
@@ -33,6 +42,13 @@
     <h1>Bill-Pay RAG Chat</h1>
     <p>Ask about payment plans, downpayments, installments &amp; fees — answered from the Postgres vector store (chunks + bill_pay).</p>
   </header>
+  <div id="uploadbar">
+    <label id="uploadbtn">＋ Upload filing (PDF)
+      <input id="file" type="file" accept="application/pdf" hidden />
+    </label>
+    <span class="hint">drop a rate-filing PDF — it’s processed and added to the knowledge base</span>
+    <div id="jobs"></div>
+  </div>
   <div id="log">
     <div class="msg bot">Hi! Ask me about the bill-pay data, e.g. <i>“What payment plans does GEICO offer?”</i> or <i>“What is Progressive’s NSF fee?”</i></div>
   </div>
@@ -61,6 +77,34 @@ function addSources(el, sources) {
   }
   el.appendChild(det); log.scrollTop = log.scrollHeight;
 }
+
+// ---- upload + status polling ----
+const fileInput = document.getElementById('file'), jobsEl = document.getElementById('jobs');
+const _cls = s => s === 'done' ? 'done' : s === 'error' ? 'err' : s === 'skipped' ? 'skip' : '';
+function renderJobs(jobs) {
+  jobsEl.innerHTML = '';
+  for (const [name, j] of Object.entries(jobs)) {
+    const d = document.createElement('div'); d.className = 'job';
+    d.innerHTML = `<b>${name}</b> — <span class="${_cls(j.state)}">${j.state}</span>` +
+                  (j.detail ? ` · ${j.detail}` : '');
+    jobsEl.appendChild(d);
+  }
+}
+async function pollStatus() {
+  try { const r = await fetch('/status'); if (r.ok) renderJobs(await r.json()); } catch (e) {}
+}
+fileInput.addEventListener('change', async () => {
+  const f = fileInput.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await fetch('/upload', { method:'POST', body: fd });
+    const data = await r.json();
+    if (data.error) add('⚠ upload failed: ' + data.error, 'bot');
+    else pollStatus();
+  } catch (e) { add('⚠ upload failed: ' + e, 'bot'); }
+  fileInput.value = '';
+});
+setInterval(pollStatus, 3000); pollStatus();
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();

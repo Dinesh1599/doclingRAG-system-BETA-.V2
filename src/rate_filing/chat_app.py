@@ -15,14 +15,16 @@ is disabled (fine for local use).
 
 import os
 import secrets
+import threading
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import (BackgroundTasks, Depends, FastAPI, File, HTTPException,
+                     UploadFile, status)
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
 
-from . import clients, vectordb
+from . import clients, pipeline, vectordb
 from .config import Config
 
 app = FastAPI(title="Bill-Pay RAG Chat")
@@ -94,6 +96,50 @@ def index() -> str:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True, "db": bool(_cfg.database_url), "key": bool(_cfg.openai_api_key)}
+
+
+# --- file upload -> ingest (drag-drop a PDF, it runs through the pipeline) -----
+_jobs: dict[str, dict] = {}          # filename -> {state, detail}
+_jobs_lock = threading.Lock()
+
+
+def _process_upload(path: Path) -> None:
+    name = path.name
+    with _jobs_lock:
+        _jobs[name] = {"state": "processing", "detail": "extracting…"}
+    try:
+        res = pipeline.run([path], _cfg)
+        if name in res.per_file:
+            st, detail = "done", (f"{res.per_file[name]} rows, "
+                                  f"{res.chunks_stored.get(name, 0)} chunks")
+        elif name in res.skipped:
+            st, detail = "skipped", res.skipped[name]
+        else:
+            st, detail = "done", "no rows"
+    except Exception as e:  # noqa: BLE001
+        st, detail = "error", str(e)[:200]
+    with _jobs_lock:
+        _jobs[name] = {"state": st, "detail": detail}
+
+
+@app.post("/upload", dependencies=[Depends(_require_auth)])
+async def upload(background: BackgroundTasks, file: UploadFile = File(...)):
+    if not (file.filename or "").lower().endswith(".pdf"):
+        return JSONResponse({"error": "only .pdf files are accepted"}, status_code=400)
+    dest_dir = _cfg.input_dir
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    path = dest_dir / Path(file.filename).name      # strip any path components
+    path.write_bytes(await file.read())
+    with _jobs_lock:
+        _jobs[path.name] = {"state": "queued", "detail": "waiting…"}
+    background.add_task(_process_upload, path)        # runs in a threadpool
+    return {"filename": path.name, "state": "queued"}
+
+
+@app.get("/status", dependencies=[Depends(_require_auth)])
+def status_endpoint() -> dict:
+    with _jobs_lock:
+        return dict(_jobs)
 
 
 @app.post("/chat", dependencies=[Depends(_require_auth)])
