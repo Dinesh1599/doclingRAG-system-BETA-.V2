@@ -10,4 +10,3 @@ input/*.docling.json
 .airflow/
 processed/
 skipped/
-_gdrive_stage/
