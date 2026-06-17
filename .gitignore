@@ -10,3 +10,4 @@ input/*.docling.json
 .airflow/
 processed/
 skipped/
+upload/

@@ -29,7 +29,12 @@ from .config import Config
 
 app = FastAPI(title="Bill-Pay RAG Chat")
 _cfg = Config.from_env()
-_HTML = (Path(__file__).resolve().parent.parent.parent / "web" / "chat.html")
+_REPO = Path(__file__).resolve().parent.parent.parent
+_HTML = _REPO / "web" / "chat.html"
+# Uploads land here — a DEDICATED folder, NOT input/. Airflow watches input/, so
+# keeping uploads separate means the chat upload and the Airflow DAG never touch
+# the same file (no double-processing). Files stay here after processing.
+_UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", str(_REPO / "upload")))
 
 _security = HTTPBasic(auto_error=False)
 
@@ -126,7 +131,7 @@ def _process_upload(path: Path) -> None:
 async def upload(background: BackgroundTasks, file: UploadFile = File(...)):
     if not (file.filename or "").lower().endswith(".pdf"):
         return JSONResponse({"error": "only .pdf files are accepted"}, status_code=400)
-    dest_dir = _cfg.input_dir
+    dest_dir = _UPLOAD_DIR                            # NOT input/ — avoids the Airflow race
     dest_dir.mkdir(parents=True, exist_ok=True)
     path = dest_dir / Path(file.filename).name      # strip any path components
     path.write_bytes(await file.read())
