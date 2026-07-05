@@ -45,8 +45,8 @@ def _archive(name: str, dest: Path) -> None:
         dest.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dest / name))
 
-
-@dag(dag_id="rate_filing_ingest", schedule=[_pdf_arrival], catchup=False,
+@dag(dag_id="rate_filing_ingest", catchup=False,
+#@dag(dag_id="rate_filing_ingest", schedule=[_pdf_arrival], catchup=False,  <---- for testing only, uncomment to run on PDF arrival
      tags=["rate-filing", "rag"])
 def rate_filing_ingest():
 

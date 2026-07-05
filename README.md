@@ -162,6 +162,41 @@ uv run uvicorn rate_filing.chat_app:app --port 8000   # then open http://localho
 Endpoints: `GET /` (chat UI), `POST /chat {question, top_k?}` → `{answer, sources[]}`,
 `GET /health`. Needs `OPENAI_API_KEY` + a reachable `DATABASE_URL`.
 
+## Studio — no-code dashboards (Tableau-like)
+
+A FastAPI app (`rate_filing.studio_app`, UI in `web/studio.html`) for building
+dashboards over the Postgres store **without writing code or SQL**: drag fields
+onto shelves or charts, add global filters, pick chart types/colors, export the
+dashboard to PDF, and ask the built-in RAG chat about the data (left panel).
+Tables are discovered from the live schema, so future `bill_pay`-like tables
+appear automatically. The browser never sends SQL — only a JSON query spec that
+is validated against the introspected schema and compiled server-side into one
+parameterized SELECT.
+
+```bash
+uv run uvicorn rate_filing.studio_app:app --port 8010   # then open http://localhost:8010
+```
+
+- **✨ Auto-build** creates a starter dashboard from any table (`/#auto` does it on load).
+- **Cross-filtering** — click any bar/slice/point and it becomes a global filter
+  chip; every chart re-renders against the selection. Click the same mark (or the
+  chip's ✕) to clear it.
+- **Drill-through to evidence** — ☰ on a chart opens the underlying rows (same
+  filters); clicking a row shows the chunks it came from (via `<table>_chunks`)
+  with an *open PDF ↗* link that jumps to the exact page (`/files/<name>#page=N`).
+- **💾 Save / 📂 Open** — dashboards are stored server-side in `studio_dashboards`
+  (auto-created), so views are shared across users/browsers; the working copy
+  still autosaves to localStorage.
+- **🪄 Improve** sends the current dashboard to the LLM for UX/chart-choice suggestions.
+- Text columns holding money (`"$15"`) can be aggregated with `Sum $` / `Avg $`
+  (server strips non-numeric characters and casts).
+- Auth: same `CHAT_PASSWORD` basic-auth scheme as the chat app.
+
+Endpoints: `GET /` (studio UI), `GET /api/schema`, `POST /api/query`,
+`POST /api/distinct`, `POST /api/rows`, `POST /api/evidence`, `GET /files/{pdf}`,
+`GET|POST|DELETE /api/dashboards[/{name}]`, `POST /chat` (dashboard-aware),
+`POST /api/suggest`, `GET /health`.
+
 ## Tests
 
 ```bash

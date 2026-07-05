@@ -1,0 +1,1230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rate-Filing Studio</title>
+<link rel="icon" href="data:," />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js"></script>
+<style>
+  /* ---- design tokens (validated dark palette) ---- */
+  :root {
+    --page:#0d0d0d; --surface:#1a1a19; --surface-2:#22221f;
+    --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,.10);
+    --accent:#3987e5; --good:#0ca30c; --bad:#e66767; --warn:#c98500;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; }
+  body { margin:0; background:var(--page); color:var(--ink-2);
+         font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+         display:flex; flex-direction:column; overflow:hidden; }
+
+  /* ---- header ---- */
+  header { display:flex; align-items:center; gap:10px; padding:10px 16px;
+           background:var(--surface); border-bottom:1px solid var(--border); flex:0 0 auto; }
+  header h1 { font-size:15px; margin:0 14px 0 0; color:var(--ink); font-weight:650; }
+  header h1 span { color:var(--accent); }
+  .btn { background:var(--surface-2); color:var(--ink-2); border:1px solid var(--border);
+         border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; white-space:nowrap; }
+  .btn:hover { border-color:var(--accent); color:var(--ink); }
+  .btn.primary { background:var(--accent); border-color:transparent; color:#fff; font-weight:600; }
+  .btn.primary:hover { filter:brightness(1.1); }
+  .btn:disabled { opacity:.45; cursor:default; }
+  header .gap { flex:1; }
+  #dbBadge { font-size:12px; color:var(--muted); }
+  #tabs { display:flex; gap:2px; background:var(--page); border:1px solid var(--border);
+          border-radius:9px; padding:2px; margin-right:6px; }
+  .tab { background:none; border:0; color:var(--muted); font-size:12.5px;
+         padding:5px 12px; border-radius:7px; cursor:pointer; white-space:nowrap; }
+  .tab.on { background:var(--surface-2); color:var(--ink); }
+
+  /* ---- 3-column shell ---- */
+  #shell { flex:1; display:flex; min-height:0; }
+
+  /* chat panel */
+  #chat { width:300px; flex:0 0 auto; display:flex; flex-direction:column;
+          background:var(--surface); border-right:1px solid var(--border);
+          transition:margin-left .2s ease; }
+  #chat.closed { margin-left:-300px; }
+  #chat .head { padding:10px 12px; border-bottom:1px solid var(--border);
+                font-weight:600; color:var(--ink); font-size:13px; display:flex; justify-content:space-between; }
+  #chatCore { flex:1; display:flex; flex-direction:column; min-height:0; }
+  /* drag handle between the chat pane and the canvas */
+  #chatResize { width:5px; flex:0 0 auto; cursor:col-resize; background:transparent; }
+  #chatResize:hover, #chatResize.active { background:var(--accent); }
+  #chat.closed + #chatResize { display:none; }
+  /* full-page chat view (the 💬 Chat tab) */
+  #chatFull { display:none; flex:1; justify-content:center; min-height:0; }
+  #chatFull .wrap { width:100%; max-width:920px; display:flex; flex-direction:column;
+                    min-height:0; padding:8px 20px 0; }
+  #chatFull .fhead { padding:8px 4px 12px; font-weight:600; color:var(--ink); }
+  #chatFull .fhead span { color:var(--muted); font-weight:400; font-size:12.5px; }
+  body.chatview #chat, body.chatview #chatResize, body.chatview #center,
+  body.chatview #panel { display:none; }
+  body.chatview #chatFull { display:flex; }
+  body.chatview #chatToggle, body.chatview #addChart, body.chatview #autoBuild,
+  body.chatview #saveDash, body.chatview #openDash, body.chatview #pdf,
+  body.chatview #reset { display:none; }
+  body.chatview .msg { max-width:82%; font-size:14px; }
+  #chatLog { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:10px; }
+  .msg { padding:9px 11px; border-radius:10px; font-size:13px; white-space:pre-wrap;
+         word-wrap:break-word; max-width:95%; }
+  .msg.me  { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:3px; }
+  .msg.bot { align-self:flex-start; background:var(--surface-2); border-bottom-left-radius:3px; }
+  .msg.bot b { color:var(--ink); }
+  .msg.bot ul { margin:6px 0; padding-left:18px; }
+  .msg .srcs { margin-top:8px; border-top:1px solid var(--border); padding-top:6px;
+               font-size:11.5px; color:var(--muted); }
+  .msg .srcs summary { cursor:pointer; color:var(--accent); }
+  #chatForm { display:flex; gap:8px; padding:10px; border-top:1px solid var(--border); }
+  #chatForm input { flex:1; background:var(--page); color:var(--ink); border:1px solid var(--border);
+                    border-radius:8px; padding:9px 11px; font-size:13px; }
+
+  /* center canvas */
+  #center { flex:1; min-width:0; display:flex; flex-direction:column; }
+  #filterBar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+               padding:10px 16px; border-bottom:1px solid var(--border); min-height:52px; }
+  #filterBar .lbl { color:var(--muted); font-size:12px; }
+  #filterBar.dragover { background:rgba(57,135,229,.08); outline:1px dashed var(--accent); outline-offset:-4px; }
+  .fchip { display:inline-flex; align-items:center; gap:6px; background:var(--surface-2);
+           border:1px solid var(--border); border-radius:999px; padding:4px 10px;
+           font-size:12.5px; cursor:pointer; }
+  .fchip b { color:var(--ink); font-weight:600; }
+  .fchip .x { color:var(--muted); cursor:pointer; padding:0 2px; }
+  .fchip .x:hover { color:var(--bad); }
+  #grid { flex:1; overflow-y:auto; padding:16px;
+          display:grid; grid-template-columns:repeat(auto-fill,minmax(400px,1fr));
+          gap:14px; align-content:start; }
+
+  /* chart card */
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+          display:flex; flex-direction:column; min-height:330px; position:relative; }
+  .card.wide { grid-column:span 2; }
+  .card.selected { outline:2px solid var(--accent); outline-offset:-1px; }
+  .card.loading .body { opacity:.55; }             /* hold old render, no skeleton flash */
+  .card .head { display:flex; align-items:center; gap:6px; padding:10px 12px 4px; }
+  .card .head input.title { flex:1; background:transparent; border:0; color:var(--ink);
+        font-size:13.5px; font-weight:600; outline:0; min-width:0; }
+  .card .head input.title:focus { border-bottom:1px solid var(--accent); }
+  .card .sub { padding:0 12px 6px; font-size:11.5px; color:var(--muted); }
+  .card .tools { display:flex; gap:2px; }
+  .icobtn { background:none; border:0; color:var(--muted); cursor:pointer; font-size:13px;
+            padding:3px 5px; border-radius:6px; line-height:1; }
+  .icobtn:hover { color:var(--ink); background:var(--surface-2); }
+  .card .body { flex:1; min-height:0; padding:6px 12px 12px; position:relative; }
+  .card .body canvas { max-width:100%; }
+  .card.dragover { outline:2px dashed var(--accent); outline-offset:-2px; }
+
+  /* stat tile */
+  .stat { height:100%; display:flex; flex-direction:column; justify-content:center; padding:0 8px; }
+  .stat .label { font-size:13px; color:var(--muted); }
+  .stat .value { font-size:52px; font-weight:650; color:var(--ink); line-height:1.15; }
+  .stat .note  { font-size:12px; color:var(--muted); }
+
+  /* data table view */
+  .tbl { height:100%; overflow:auto; }
+  .tbl table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  .tbl th { position:sticky; top:0; background:var(--surface-2); color:var(--ink-2);
+            text-align:left; padding:6px 10px; border-bottom:1px solid var(--baseline); }
+  .tbl td { padding:5px 10px; border-bottom:1px solid var(--grid); color:var(--ink-2); }
+  .tbl td.num { text-align:right; font-variant-numeric:tabular-nums; }
+
+  /* empty state */
+  .empty { grid-column:1/-1; border:1px dashed var(--baseline); border-radius:12px;
+           padding:44px; text-align:center; color:var(--muted); }
+  .empty b { color:var(--ink); }
+
+  /* right panel */
+  #panel { width:290px; flex:0 0 auto; background:var(--surface); border-left:1px solid var(--border);
+           overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:14px; }
+  #panel h3 { margin:0 0 6px; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+              color:var(--muted); font-weight:650; }
+  #panel select, #panel input[type=number] {
+      background:var(--page); color:var(--ink); border:1px solid var(--border);
+      border-radius:8px; padding:6px 8px; font-size:13px; width:100%; }
+  .pill { display:inline-flex; align-items:center; gap:6px; background:var(--surface-2);
+          border:1px solid var(--border); border-radius:999px; padding:4px 10px; margin:0 6px 6px 0;
+          font-size:12.5px; cursor:grab; user-select:none; }
+  .pill:active { cursor:grabbing; }
+  .pill .glyph { font-size:10.5px; font-weight:700; color:var(--muted); }
+  .pill.dim  .glyph { color:#6da7ec; }
+  .pill.meas .glyph { color:#199e70; }
+  .pill.date .glyph { color:#c98500; }
+  .pill .add { color:var(--muted); cursor:pointer; font-weight:700; }
+  .pill .add:hover { color:var(--accent); }
+  .shelf { min-height:40px; border:1px dashed var(--baseline); border-radius:10px;
+           padding:6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .shelf.dragover { border-color:var(--accent); background:rgba(57,135,229,.08); }
+  .shelf .hint { color:var(--muted); font-size:12px; padding:2px 6px; }
+  .chip { display:inline-flex; align-items:center; gap:5px; background:var(--surface-2);
+          border:1px solid var(--border); border-radius:8px; padding:3px 7px; font-size:12.5px; }
+  .chip b { color:var(--ink); font-weight:600; }
+  .chip select { width:auto; background:var(--page); color:var(--ink-2); border:1px solid var(--border);
+                 border-radius:6px; font-size:11.5px; padding:2px 3px; }
+  .chip .x { color:var(--muted); cursor:pointer; }
+  .chip .x:hover { color:var(--bad); }
+  .typegrid { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .typebtn { background:var(--surface-2); border:1px solid var(--border); border-radius:8px;
+             color:var(--ink-2); font-size:11.5px; padding:7px 2px; cursor:pointer; text-align:center; }
+  .typebtn .g { display:block; font-size:15px; }
+  .typebtn.on { border-color:var(--accent); color:var(--ink); background:rgba(57,135,229,.12); }
+  .swatches { display:flex; gap:6px; flex-wrap:wrap; }
+  .sw { width:22px; height:22px; border-radius:6px; cursor:pointer; border:2px solid transparent; }
+  .sw.on { border-color:#fff; }
+  .row2 { display:flex; gap:8px; }  .row2 > * { flex:1; }
+  #noSel { color:var(--muted); font-size:12.5px; }
+
+  /* filter popover */
+  #pop { position:fixed; z-index:50; background:var(--surface-2); border:1px solid var(--border);
+         border-radius:12px; padding:10px; width:260px; max-height:380px; display:none;
+         flex-direction:column; gap:8px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  #pop input[type=text], #pop input[type=date], #pop input[type=number] {
+        background:var(--page); color:var(--ink); border:1px solid var(--border);
+        border-radius:8px; padding:6px 8px; font-size:13px; width:100%; }
+  #pop .list { overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:2px; }
+  #pop label.opt { display:flex; gap:8px; align-items:center; font-size:12.5px; padding:3px 4px;
+                   border-radius:6px; cursor:pointer; }
+  #pop label.opt:hover { background:var(--surface); }
+  #toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
+           background:var(--surface-2); border:1px solid var(--border); color:var(--ink);
+           padding:10px 16px; border-radius:10px; font-size:13px; display:none; z-index:60; }
+
+  /* drill-through drawer */
+  #drawer { position:fixed; left:0; right:0; bottom:0; height:46%; z-index:45;
+            background:var(--surface); border-top:1px solid var(--baseline);
+            display:none; flex-direction:column; box-shadow:0 -10px 30px rgba(0,0,0,.5); }
+  #drawer .dhead { display:flex; align-items:center; gap:10px; padding:10px 16px;
+                   border-bottom:1px solid var(--border); font-size:13px; }
+  #drawer .dhead b { color:var(--ink); }
+  #drawer .dhead .gap { flex:1; }
+  #dBody { flex:1; overflow:auto; padding:0 16px 12px; }
+  #dBody table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  #dBody th { position:sticky; top:0; background:var(--surface-2); color:var(--ink-2);
+              text-align:left; padding:6px 10px; border-bottom:1px solid var(--baseline);
+              white-space:nowrap; }
+  #dBody td { padding:5px 10px; border-bottom:1px solid var(--grid); color:var(--ink-2);
+              max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #dBody tr.datarow { cursor:pointer; }
+  #dBody tr.datarow:hover td { background:var(--surface-2); }
+  .ev { margin:6px 0; padding:8px 10px; background:var(--page); border:1px solid var(--border);
+        border-radius:8px; white-space:normal; }
+  .ev b { color:var(--ink); }
+  .ev a { color:var(--accent); text-decoration:none; margin-left:8px; }
+  .ev .snip { margin-top:4px; font-size:11.5px; color:var(--muted); white-space:normal; }
+</style>
+</head>
+<body>
+
+<header>
+  <button class="btn" id="chatToggle" title="Show / hide the chat panel">💬</button>
+  <h1><span>◈</span> Rate-Filing Studio</h1>
+  <div id="tabs">
+    <button class="tab on" data-view="dash">📊 Dashboard</button>
+    <button class="tab" data-view="chat">💬 Chat</button>
+  </div>
+  <button class="btn primary" id="addChart">＋ Add chart</button>
+  <button class="btn" id="autoBuild" title="Build a starter dashboard from the selected table">✨ Auto-build</button>
+  <button class="btn" id="saveDash" title="Save this dashboard to the server (shared)">💾 Save</button>
+  <button class="btn" id="openDash" title="Open a saved dashboard">📂 Open</button>
+  <div class="gap"></div>
+  <span id="dbBadge">…</span>
+  <button class="btn" id="suggest" title="AI review: how to improve this dashboard">🪄 Improve</button>
+  <button class="btn" id="pdf">⬇ PDF</button>
+  <button class="btn" id="reset" title="Clear the dashboard">Reset</button>
+</header>
+
+<div id="shell">
+
+  <aside id="chat" class="closed">
+    <div class="head">Ask your data <span style="color:var(--muted);font-weight:400">RAG chat</span></div>
+    <div id="chatCore">
+      <div id="chatLog">
+        <div class="msg bot">Hi! Ask about the underlying filings — e.g. <i>“What payment plans does GEICO offer?”</i> — or about <i>“this dashboard”</i>. Follow-ups are fine: I remember the conversation.</div>
+      </div>
+      <form id="chatForm"><input id="chatQ" placeholder="Ask a question…" autocomplete="off" />
+        <button class="btn primary" id="chatSend">➤</button></form>
+    </div>
+  </aside>
+  <div id="chatResize" title="Drag to resize the chat panel"></div>
+
+  <div id="chatFull"><div class="wrap" id="chatFullWrap">
+    <div class="fhead">Chat with your data <span>— answers cite the source PDF + page · 🪄 Improve replies land here too</span></div>
+  </div></div>
+
+  <main id="center">
+    <div id="filterBar">
+      <span class="lbl">Filters — drag a field here, or</span>
+      <button class="btn" id="addFilter" style="padding:4px 10px;font-size:12px">＋ Add filter</button>
+      <span id="fchips" style="display:contents"></span>
+    </div>
+    <div id="grid"></div>
+  </main>
+
+  <aside id="panel">
+    <div>
+      <h3>Data</h3>
+      <select id="tableSel"></select>
+      <div id="fieldList" style="margin-top:10px"></div>
+    </div>
+    <div id="config">
+      <div id="noSel">Select a chart (or ＋ Add chart) to configure it. Drag fields onto the shelves below or straight onto a chart.</div>
+      <div id="cfgBody" style="display:none">
+        <h3>Chart type</h3>
+        <div class="typegrid" id="typeGrid"></div>
+        <h3 style="margin-top:14px">Category <span style="text-transform:none;letter-spacing:0">(x-axis / slices)</span></h3>
+        <div class="shelf" id="shelfX"><span class="hint">drop a field</span></div>
+        <h3 style="margin-top:14px">Break down by <span style="text-transform:none;letter-spacing:0">(color)</span></h3>
+        <div class="shelf" id="shelfC"><span class="hint">drop a dimension</span></div>
+        <h3 style="margin-top:14px">Values <span style="text-transform:none;letter-spacing:0">(y-axis)</span></h3>
+        <div class="shelf" id="shelfY"><span class="hint">drop a field — defaults to row count</span></div>
+        <h3 style="margin-top:14px">Color</h3>
+        <div class="swatches" id="swatches"></div>
+        <div class="row2" style="margin-top:14px">
+          <div><h3>Sort</h3><select id="sortSel">
+            <option value="desc">Largest first</option><option value="asc">Smallest first</option>
+            <option value="dim">By category / date</option></select></div>
+          <div><h3>Top N</h3><select id="topSel">
+            <option>10</option><option selected>15</option><option>25</option><option>50</option><option value="500">All</option></select></div>
+        </div>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<div id="drawer">
+  <div class="dhead"><span id="dTitle"></span><span class="gap"></span>
+    <button class="icobtn" id="dClose" title="Close">✕</button></div>
+  <div id="dBody"></div>
+</div>
+<div id="pop"></div>
+<div id="toast"></div>
+
+<script>
+/* =============== design tokens (validated palette — dark mode) =============== */
+const SURFACE='#1a1a19', PAGE='#0d0d0d', INK='#ffffff', INK2='#c3c2b7',
+      MUTED='#898781', GRID='#2c2c2a', BASELINE='#383835';
+const CAT   = ['#3987e5','#199e70','#c98500','#008300','#9085e9','#e66767','#d55181','#d95926'];
+const OTHER = '#898781';
+const SEQ   = ['#86b6ef','#6da7ec','#5598e7','#3987e5','#2a78d6','#256abf','#1c5cab','#184f95'];
+
+Chart.defaults.color = MUTED;
+Chart.defaults.font.family = 'system-ui,-apple-system,"Segoe UI",sans-serif';
+Chart.defaults.font.size = 11.5;
+Chart.defaults.plugins.tooltip.backgroundColor = '#22221f';
+Chart.defaults.plugins.tooltip.titleColor = INK;
+Chart.defaults.plugins.tooltip.bodyColor = INK2;
+Chart.defaults.plugins.tooltip.borderColor = 'rgba(255,255,255,.12)';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.cornerRadius = 8;
+Chart.defaults.plugins.tooltip.padding = 10;
+
+/* =============== state =============== */
+const LS_KEY = 'studio.dashboard.v1';
+let SCHEMA = { tables: [] };                 // from /api/schema
+let state = { charts: [], filters: [], colorMap: {}, seq: 1, table: null };
+let selectedId = null;
+const chartObjs = {};                        // chartId -> Chart.js instance
+
+const $ = s => document.querySelector(s);
+const el = (t, cls, html) => { const d = document.createElement(t);
+  if (cls) d.className = cls; if (html !== undefined) d.innerHTML = html; return d; };
+const toast = m => { const t = $('#toast'); t.textContent = m; t.style.display = 'block';
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', 3000); };
+const save = () => localStorage.setItem(LS_KEY, JSON.stringify(state));
+
+async function api(path, body) {
+  const r = await fetch(path, { method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || j.detail || r.statusText);
+  return j;
+}
+async function apiGet(path, method = 'GET') {
+  const r = await fetch(path, { method });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) throw new Error(j.error || j.detail || r.statusText);
+  return j;
+}
+
+/* =============== schema / fields panel =============== */
+function tbl(name) { return SCHEMA.tables.find(t => t.name === name); }
+function colMeta(table, col) { const t = tbl(table); return t && t.columns.find(c => c.name === col); }
+
+async function loadSchema() {
+  const r = await fetch('/api/schema'); const j = await r.json();
+  if (j.error) { $('#dbBadge').textContent = '⚠ ' + j.error; return; }
+  SCHEMA = j;
+  $('#dbBadge').textContent = j.tables.map(t => `${t.name} (${t.rows.toLocaleString()} rows)`).join(' · ');
+  const sel = $('#tableSel'); sel.innerHTML = '';
+  for (const t of j.tables) sel.append(new Option(`${t.name} — ${t.rows.toLocaleString()} rows`, t.name));
+  if (!state.table || !tbl(state.table)) state.table = j.tables[0] && j.tables[0].name;
+  sel.value = state.table || '';
+  renderFields();
+}
+
+const GLYPH = { dimension:'Abc', measure:'#', date:'◷' };
+function renderFields() {
+  const list = $('#fieldList'); list.innerHTML = '';
+  const t = tbl(state.table); if (!t) return;
+  const groups = { date:'Dates', dimension:'Dimensions', measure:'Measures' };
+  for (const role of ['dimension','date','measure']) {
+    const cols = t.columns.filter(c => c.role === role);
+    if (!cols.length) continue;
+    list.append(el('h3', '', groups[role]));
+    for (const c of cols) {
+      const p = el('span', 'pill ' + (role==='measure'?'meas':role==='date'?'date':'dim'));
+      p.draggable = true;
+      p.innerHTML = `<span class="glyph">${GLYPH[role]}</span>${c.name}<span class="add" title="Add to selected chart">＋</span>`;
+      p.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain',
+          JSON.stringify({ table: t.name, col: c.name, role })));
+      p.querySelector('.add').onclick = () => quickAdd({ table: t.name, col: c.name, role });
+      list.append(p);
+    }
+  }
+}
+$('#tableSel').onchange = e => { state.table = e.target.value; renderFields(); save(); };
+
+/* =============== charts: model =============== */
+function newChart(partial) {
+  const c = Object.assign({ id: 'c' + (state.seq++), title: '', type: 'auto',
+      table: state.table, x: null, color: null, values: [], slot: 0,
+      sort: 'desc', topN: 15, wide: false, showTable: false }, partial);
+  state.charts.push(c); selectedId = c.id; save();
+  renderGrid(); renderConfig(); refreshAll();   // rebuild wipes canvases -> redraw all
+  return c;
+}
+function getChart(id) { return state.charts.find(c => c.id === id); }
+function autoTitle(c) {
+  const val = c.values.length ? c.values.map(v => aggLabel(v)).join(', ') : 'Count of rows';
+  let t = val;
+  if (c.x) t += ` by ${c.x.col}${c.x.bucket ? ' (' + c.x.bucket + ')' : ''}`;
+  if (c.color) t += `, split by ${c.color.col}`;
+  return t;
+}
+const AGG_LABEL = { count:'Count', count_distinct:'Distinct', sum:'Sum', avg:'Avg', min:'Min',
+  max:'Max', sum_num:'Sum $', avg_num:'Avg $', min_num:'Min $', max_num:'Max $' };
+function aggLabel(v) { return v.col === '*' ? 'Count of rows' : `${AGG_LABEL[v.agg]} of ${v.col}`; }
+function aggOptions(role) {
+  if (role === 'measure') return ['sum','avg','min','max','count','count_distinct'];
+  if (role === 'date')    return ['count','count_distinct'];
+  return ['count','count_distinct','sum_num','avg_num','min_num','max_num'];
+}
+
+/* what the "auto" type resolves to, from the data shape */
+function resolveType(c, nCats) {
+  if (c.type !== 'auto') return c.type;
+  if (!c.x) return 'stat';
+  if (c.color) return 'stack';
+  if (colMeta(c.table, c.x.col)?.role === 'date') return 'line';
+  return (nCats || 0) > 10 ? 'hbar' : 'bar';
+}
+
+/* =============== query + pivot =============== */
+function specFor(c) {
+  const dims = [];
+  const type = c.type === 'auto' ? null : c.type;
+  if (c.x && type !== 'stat') dims.push({ col: c.x.col, bucket: c.x.bucket || null });
+  if (c.color && type !== 'pie') dims.push({ col: c.color.col, bucket: c.color.bucket || null });
+  const measures = (c.values.length ? c.values : [{ col:'*', agg:'count' }])
+      .slice(0, c.color ? 1 : 3)                     // color-split uses first measure only
+      .map(v => ({ col: v.col, agg: v.agg }));
+  const filters = state.filters.filter(f => f.table === c.table)
+      .map(f => ({ col: f.col, op: f.op, values: f.values }));
+  const isDate = c.x && colMeta(c.table, c.x.col)?.role === 'date';
+  return { table: c.table, dims, measures, filters,
+           sort: c.sort === 'dim' || isDate ? 'dim' : c.sort, limit: 2000 };
+}
+
+/* stable entity colors: value -> categorical slot, assigned on first sight */
+function entityColor(value) {
+  if (!(value in state.colorMap)) {
+    state.colorMap[value] = Object.keys(state.colorMap).length % CAT.length; save();
+  }
+  return CAT[state.colorMap[value]];
+}
+
+function fmtCompact(v) {
+  if (v == null) return '–';
+  const n = +v; if (Number.isNaN(n)) return String(v);
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(1).replace(/\.0$/,'') + 'M';
+  if (Math.abs(n) >= 1e4) return (n/1e3).toFixed(1).replace(/\.0$/,'') + 'K';
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+function fmtBucket(v, bucket) {
+  if (v == null) return '(none)';
+  const d = new Date(v); if (isNaN(d)) return String(v);
+  if (bucket === 'year') return String(d.getUTCFullYear());
+  if (bucket === 'quarter') return 'Q' + (Math.floor(d.getUTCMonth()/3)+1) + ' ' + d.getUTCFullYear();
+  if (bucket === 'month') return d.toLocaleDateString(undefined,{ month:'short', year:'numeric', timeZone:'UTC' });
+  return d.toLocaleDateString(undefined,{ timeZone:'UTC' });
+}
+
+/* rows -> {labels, raw, datasets[{label,data}], truncated} for Chart.js.
+   `raw` keeps the un-formatted x values so a mark click can become a filter. */
+function pivot(c, rows) {
+  const hasColor = !!c.color && c.type !== 'pie';
+  const bucket = c.x && c.x.bucket;
+  if (!hasColor) {
+    let labels = rows.map(r => r.d0 == null ? '(none)' : (bucket ? fmtBucket(r.d0, bucket) : String(r.d0)));
+    let raw = rows.map(r => r.d0);
+    const sets = specFor(c).measures.map((m, i) => ({
+      label: aggLabel(c.values[i] || { col:'*', agg:'count' }),
+      data: rows.map(r => r['m'+i] == null ? null : +r['m'+i]) }));
+    let truncated = 0;
+    if (labels.length > c.topN) { truncated = labels.length - c.topN;
+      labels = labels.slice(0, c.topN); raw = raw.slice(0, c.topN);
+      sets.forEach(s => s.data = s.data.slice(0, c.topN)); }
+    return { labels, raw, datasets: sets, truncated };
+  }
+  // pivot d1 (color) into series; keep top-7 series by total, fold the rest into "Other"
+  const xs = [], xRaw = [], xIdx = new Map(), totals = new Map(), rawBySv = new Map();
+  for (const r of rows) {
+    const xv = r.d0 == null ? '(none)' : (bucket ? fmtBucket(r.d0, bucket) : String(r.d0));
+    if (!xIdx.has(xv)) { xIdx.set(xv, xs.length); xs.push(xv); xRaw.push(r.d0); }
+    const sv = r.d1 == null ? '(none)' : String(r.d1);
+    if (!rawBySv.has(sv)) rawBySv.set(sv, r.d1);
+    totals.set(sv, (totals.get(sv) || 0) + (+r.m0 || 0));
+  }
+  const keep = [...totals.entries()].sort((a,b) => b[1]-a[1]).slice(0,7).map(e => e[0]);
+  const series = new Map(keep.map(k => [k, new Array(xs.length).fill(0)]));
+  let other = null;
+  for (const r of rows) {
+    const xv = r.d0 == null ? '(none)' : (bucket ? fmtBucket(r.d0, bucket) : String(r.d0));
+    const sv = r.d1 == null ? '(none)' : String(r.d1);
+    const arr = series.get(sv) || (other ??= new Array(xs.length).fill(0));
+    arr[xIdx.get(xv)] += (+r.m0 || 0);
+  }
+  let labels = xs, raw = xRaw, truncated = 0;
+  const cut = arrs => arrs.slice(0, c.topN);
+  if (xs.length > c.topN) { truncated = xs.length - c.topN;
+    labels = xs.slice(0, c.topN); raw = xRaw.slice(0, c.topN); }
+  const datasets = keep.map(k => ({ label: k, data: cut(series.get(k)),
+                                    _entity: k, _entityRaw: rawBySv.get(k) }));
+  if (other) datasets.push({ label: 'Other', data: cut(other), _other: true });
+  return { labels, raw, datasets, truncated };
+}
+
+/* =============== rendering =============== */
+function renderGrid() {
+  const grid = $('#grid'); grid.innerHTML = '';
+  if (!state.charts.length) {
+    grid.append(el('div','empty',
+      `<b>Build your first view</b><br><br>
+       ① pick a table on the right &nbsp;→&nbsp; ② drag a field onto <b>＋ Add chart</b>'s card
+       &nbsp;→&nbsp; ③ add filters up top.<br><br>
+       Or click <b>✨ Auto-build</b> and get a starter dashboard instantly — no code, ever.<br><br>
+       <span style="font-size:12.5px">Then: <b>click any bar</b> to cross-filter every chart ·
+       <b>☰</b> shows the rows behind a chart and their source-PDF evidence ·
+       <b>💾 Save</b> shares the dashboard with your team.</span>`));
+    return;
+  }
+  for (const c of state.charts) grid.append(cardEl(c));
+}
+
+function cardEl(c) {
+  const card = el('div', 'card' + (c.wide?' wide':'') + (c.id===selectedId?' selected':''));
+  card.dataset.id = c.id;
+  const head = el('div','head');
+  const title = el('input','title'); title.value = c.title || autoTitle(c);
+  title.onchange = () => { c.title = title.value; save(); };
+  const tools = el('div','tools');
+  const mk = (g, tip, fn) => { const b = el('button','icobtn',g); b.title = tip;
+      b.onclick = e => { e.stopPropagation(); fn(); }; return b; };
+  tools.append(
+    mk('☰','Underlying rows & source evidence', () => openDrawer(c)),
+    mk('▦','Toggle data table view', () => { c.showTable = !c.showTable; save(); refresh(c); }),
+    mk('⇔','Toggle wide', () => { c.wide = !c.wide; save(); renderGrid(); refreshAll(); }),
+    mk('✕','Remove chart', () => { destroyChart(c.id);
+        state.charts = state.charts.filter(x => x.id !== c.id);
+        if (selectedId === c.id) selectedId = null;
+        save(); renderGrid(); renderConfig(); refreshAll(); }));
+  head.append(title, tools);
+  const sub = el('div','sub', c.table + (state.filters.filter(f=>f.table===c.table).length
+      ? ` · ${state.filters.filter(f=>f.table===c.table).length} filter(s)` : ''));
+  const body = el('div','body');
+  card.append(head, sub, body);
+  card.onclick = () => selectChart(c.id);
+  /* drop a field straight onto the card */
+  card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('dragover'); });
+  card.addEventListener('dragleave', () => card.classList.remove('dragover'));
+  card.addEventListener('drop', e => { e.preventDefault(); card.classList.remove('dragover');
+    const f = dragged(e); if (!f) return; selectedId = c.id; assignField(c, f);
+  });
+  return card;
+}
+
+function dragged(e) { try { return JSON.parse(e.dataTransfer.getData('text/plain')); }
+                      catch { return null; } }
+
+/* selection is a class toggle, NOT a grid rebuild — rebuilding would blank the charts */
+function selectChart(id) {
+  selectedId = id;
+  document.querySelectorAll('.card').forEach(cd =>
+      cd.classList.toggle('selected', cd.dataset.id === selectedId));
+  renderConfig();
+}
+
+/* smart assignment: dims fill X then Color; measures go to Values */
+function assignField(c, f) {
+  if (f.table !== c.table) { c.table = f.table; c.x = null; c.color = null; c.values = []; }
+  const meta = colMeta(f.table, f.col);
+  if (meta.role === 'measure') c.values.push({ col: f.col, agg: 'sum' });
+  else if (!c.x) c.x = { col: f.col, bucket: meta.role === 'date' ? 'year' : null };
+  else if (!c.color) c.color = { col: f.col, bucket: meta.role === 'date' ? 'year' : null };
+  else c.values.push({ col: f.col, agg: 'count' });
+  save(); renderGrid(); renderConfig(); refreshAll();
+}
+function quickAdd(f) {
+  let c = getChart(selectedId);
+  if (!c) c = newChart({ table: f.table });
+  assignField(c, f);
+}
+
+function destroyChart(id) { if (chartObjs[id]) { chartObjs[id].destroy(); delete chartObjs[id]; } }
+
+async function refresh(c) {
+  const card = $(`.card[data-id="${c.id}"]`); if (!card) return;
+  card.classList.add('loading');
+  try {
+    const isStat = resolveType(c) === 'stat' || (!c.x && c.type === 'auto');
+    const spec = specFor(c);
+    if (isStat) spec.dims = [];
+    const { rows, sql } = await api('/api/query', spec);
+    card.title = sql;                                    // transparency: hover shows the SQL
+    draw(c, card.querySelector('.body'), rows);
+    card.querySelector('input.title').value = c.title || autoTitle(c);
+  } catch (e) {
+    card.querySelector('.body').innerHTML =
+      `<div style="color:var(--bad);font-size:12.5px;padding:20px">⚠ ${e.message}</div>`;
+  } finally { card.classList.remove('loading'); }
+}
+function refreshAll() { state.charts.forEach(refresh); }
+
+function draw(c, body, rows) {
+  destroyChart(c.id);
+  const type = resolveType(c, rows.length);
+  body.innerHTML = '';
+
+  if (c.showTable || type === 'table') return drawTable(c, body, rows);
+  if (type === 'stat') {
+    const v = rows.length ? rows[0].m0 : null;
+    const label = c.values.length ? aggLabel(c.values[0]) : 'Count of rows';
+    body.innerHTML = `<div class="stat"><div class="label">${label} — ${c.table}</div>
+      <div class="value">${v == null ? '–' : (+v).toLocaleString(undefined,{maximumFractionDigits:2})}</div>
+      <div class="note">${state.filters.filter(f=>f.table===c.table).length ? 'filtered' : 'all rows'}</div></div>`;
+    return;
+  }
+
+  const p = pivot(c, rows);
+  const wrap = el('div'); wrap.style.height = '100%'; wrap.style.position = 'relative';
+  const canvas = document.createElement('canvas'); wrap.append(canvas); body.append(wrap);
+  if (p.truncated) body.append(el('div','',
+      `<span style="font-size:11px;color:var(--muted)">showing top ${c.topN} · ${p.truncated} more — raise “Top N” or use the table view</span>`));
+
+  const accent = CAT[c.slot % CAT.length];
+  const multi = p.datasets.length > 1;
+  const color = (ds, i) => ds._other ? OTHER : (multi ? entityColor(ds._entity ?? ds.label) : accent);
+
+  const axisTitleOn = false;
+  const scales = {
+    x: { grid: { display: type === 'hbar', color: GRID, lineWidth: 1 },
+         border: { color: BASELINE }, stacked: type === 'stack',
+         ticks: { autoSkip: true, maxRotation: 45,
+                  callback(v){ const s = String(this.getLabelForValue(v));
+                               return s.length > 18 ? s.slice(0,17) + '…' : s; } } },
+    y: { beginAtZero: true, grid: { display: type !== 'hbar', color: GRID, lineWidth: 1 },
+         border: { display: false }, stacked: type === 'stack',
+         ticks: { callback: v => fmtCompact(v) } } };
+
+  let cfg;
+  if (type === 'pie') {
+    const labels = p.labels.slice(0, 8);
+    const data = p.datasets[0].data.slice(0, 8);
+    if (p.labels.length > 8) {
+      labels.push('Other');
+      data.push(p.datasets[0].data.slice(8).reduce((a,b) => a + (+b||0), 0));
+    }
+    cfg = { type: 'doughnut',
+      data: { labels, datasets: [{ data,
+        backgroundColor: labels.map(l => l === 'Other' ? OTHER : entityColor(l)),
+        borderColor: SURFACE, borderWidth: 2 }] },        // surface gap between slices
+      options: { cutout: '55%', maintainAspectRatio: false,
+        plugins: { legend: { position: 'right',
+          labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true, color: INK2 } } } } };
+    if (labels.length > 6) body.append(el('div','',
+      `<span style="font-size:11px;color:var(--warn)">tip: ${labels.length} slices is hard to read — a bar chart compares these better</span>`));
+  } else if (type === 'line') {
+    cfg = { type: 'line',
+      data: { labels: p.labels, datasets: p.datasets.map((ds,i) => ({ ...ds,
+        borderColor: color(ds,i), backgroundColor: color(ds,i),
+        borderWidth: 2, tension: .25,                    // 2px line
+        pointRadius: 4, pointHoverRadius: 6,             // ≥8px marker…
+        pointBorderColor: SURFACE, pointBorderWidth: 2,  // …with a 2px surface ring
+        spanGaps: true })) },
+      options: { maintainAspectRatio: false, scales,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { display: multi,
+          labels: { boxWidth: 10, usePointStyle: true, color: INK2 } } } } };
+  } else {                                               // bar | hbar | stack
+    cfg = { type: 'bar',
+      data: { labels: p.labels, datasets: p.datasets.map((ds,i) => ({ ...ds,
+        backgroundColor: color(ds,i),
+        maxBarThickness: 24,                             // thin marks
+        borderRadius: type === 'stack' ? 0 : 4,          // 4px rounded data-end…
+        borderSkipped: 'start',                          // …square at the baseline
+        borderColor: SURFACE, borderWidth: type === 'stack' ? 2 : 0 })) }, // 2px surface gap
+      options: { maintainAspectRatio: false,
+        indexAxis: type === 'hbar' ? 'y' : 'x',
+        scales: type === 'hbar'
+          ? { x: { ...scales.y, stacked:false }, y: { ...scales.x, grid:{display:false} } }
+          : scales,
+        plugins: { legend: { display: multi,
+          labels: { boxWidth: 10, usePointStyle: true, color: INK2 } } } } };
+  }
+  cfg.options.plugins = cfg.options.plugins || {};
+  cfg.options.plugins.tooltip = { callbacks: {
+    label: ctx => {
+      const v = ctx.parsed.y ?? ctx.parsed.x ?? ctx.parsed;
+      return ` ${ctx.dataset.label || ctx.label}: ${(+v).toLocaleString(undefined,{maximumFractionDigits:2})}`; },
+    footer: () => 'click to filter all charts' },
+    footerColor: MUTED, footerFont: { size: 10, weight: 'normal' } };
+  /* cross-filtering: a mark click becomes a global filter chip (click again clears) */
+  cfg.options.onClick = (evt, els) => {
+    if (els.length) markClick(c, p, els[0].datasetIndex, els[0].index);
+  };
+  cfg.options.onHover = (evt, els) => {
+    evt.native.target.style.cursor = els.length ? 'pointer' : 'default';
+  };
+  chartObjs[c.id] = new Chart(canvas, cfg);
+}
+
+/* [bucket start, bucket end] (inclusive) for a clicked date bucket */
+function bucketRange(startISO, bucket) {
+  const d = new Date(String(startISO).slice(0,10) + 'T00:00:00Z');
+  const e = new Date(d);
+  if (bucket === 'year') e.setUTCFullYear(d.getUTCFullYear() + 1);
+  else if (bucket === 'quarter') e.setUTCMonth(d.getUTCMonth() + 3);
+  else if (bucket === 'month') e.setUTCMonth(d.getUTCMonth() + 1);
+  else if (bucket === 'week') e.setUTCDate(d.getUTCDate() + 7);
+  else e.setUTCDate(d.getUTCDate() + 1);
+  e.setUTCDate(e.getUTCDate() - 1);
+  return [d.toISOString().slice(0,10), e.toISOString().slice(0,10)];
+}
+
+function markClick(c, p, dsIndex, index) {
+  const pairs = [];
+  const ds = p.datasets[dsIndex];
+  if (c.x) {
+    const xr = p.raw && index < p.raw.length ? p.raw[index] : undefined;
+    if (xr === undefined) { toast('Can’t filter on the “Other” bucket'); return; }
+    if (xr === null) { toast('Can’t filter on empty values'); return; }
+    const meta = colMeta(c.table, c.x.col);
+    if (meta && meta.role === 'date' && c.x.bucket)
+      pairs.push({ col: c.x.col, op: 'between', values: bucketRange(xr, c.x.bucket) });
+    else pairs.push({ col: c.x.col, op: 'in', values: [String(xr)] });
+  }
+  if (c.color && ds && !ds._other && ds._entityRaw != null)
+    pairs.push({ col: c.color.col, op: 'in', values: [String(ds._entityRaw)] });
+  if (!pairs.length) return;
+  const key = f => JSON.stringify([f.table, f.col, f.op, f.values]);
+  const allOn = pairs.every(pr =>
+      state.filters.some(f => key(f) === key({ table: c.table, ...pr })));
+  if (allOn) {                                     // toggle the selection off
+    for (const pr of pairs) {
+      const i = state.filters.findIndex(f => key(f) === key({ table: c.table, ...pr }));
+      if (i >= 0) state.filters.splice(i, 1);
+    }
+  } else {                                         // select: replace same-column chips
+    for (const pr of pairs) {
+      state.filters = state.filters.filter(f => !(f.table === c.table && f.col === pr.col));
+      state.filters.push({ table: c.table, ...pr });
+    }
+  }
+  save(); renderFilters(); refreshAll();
+}
+
+function drawTable(c, body, rows) {
+  const dims = [];
+  if (c.x) dims.push(c.x.col + (c.x.bucket ? ` (${c.x.bucket})` : ''));
+  if (c.color) dims.push(c.color.col);
+  const meas = (c.values.length ? c.values : [{col:'*',agg:'count'}]).map(aggLabel);
+  const cols = [...dims, ...meas];
+  const t = el('div','tbl');
+  const rowsHtml = rows.slice(0, 300).map(r => {
+    const cells = [];
+    dims.forEach((_,i) => cells.push(`<td>${r['d'+i] ?? '(none)'}</td>`));
+    meas.forEach((_,i) => cells.push(`<td class="num">${r['m'+i] == null ? '–' : (+r['m'+i]).toLocaleString(undefined,{maximumFractionDigits:2})}</td>`));
+    return `<tr>${cells.join('')}</tr>`; }).join('');
+  t.innerHTML = `<table><thead><tr>${cols.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+                 <tbody>${rowsHtml}</tbody></table>`;
+  body.append(t);
+  if (rows.length > 300) body.append(el('div','',
+    `<span style="font-size:11px;color:var(--muted)">first 300 of ${rows.length} rows</span>`));
+}
+
+/* =============== right panel: shelves & options =============== */
+const TYPES = [ ['auto','✨','Auto'], ['bar','▮','Bar'], ['hbar','▬','Bar ⇄'], ['stack','▤','Stacked'],
+                ['line','◠','Line'], ['pie','◕','Pie'], ['table','▦','Table'], ['stat','№','Number'] ];
+
+function renderConfig() {
+  const c = getChart(selectedId);
+  $('#noSel').style.display = c ? 'none' : 'block';
+  $('#cfgBody').style.display = c ? 'block' : 'none';
+  if (!c) return;
+  const tg = $('#typeGrid'); tg.innerHTML = '';
+  for (const [val, g, name] of TYPES) {
+    const b = el('button','typebtn' + (c.type===val?' on':''), `<span class="g">${g}</span>${name}`);
+    b.onclick = () => { c.type = val; save(); renderConfig(); refresh(c); };
+    tg.append(b);
+  }
+  renderShelf($('#shelfX'), c, 'x');
+  renderShelf($('#shelfC'), c, 'color');
+  renderShelf($('#shelfY'), c, 'values');
+  const sw = $('#swatches'); sw.innerHTML = '';
+  CAT.forEach((hex, i) => {
+    const s = el('div','sw' + (c.slot===i?' on':'')); s.style.background = hex;
+    s.title = 'Accent color (single-series charts)';
+    s.onclick = () => { c.slot = i; save(); renderConfig(); refresh(c); }; sw.append(s); });
+  $('#sortSel').value = c.sort; $('#topSel').value = String(c.topN);
+  $('#sortSel').onchange = e => { c.sort = e.target.value; save(); refresh(c); };
+  $('#topSel').onchange = e => { c.topN = +e.target.value; save(); refresh(c); };
+}
+
+function renderShelf(shelf, c, slot) {
+  shelf.innerHTML = '';
+  const items = slot === 'values' ? c.values : (c[slot] ? [c[slot]] : []);
+  if (!items.length) shelf.append(el('span','hint', slot === 'values' ? 'row count (default)' : 'drop a field'));
+  items.forEach((item, idx) => {
+    const meta = colMeta(c.table, item.col) || { role:'dimension' };
+    const chip = el('span','chip');
+    chip.append(el('b','', item.col === '*' ? 'rows' : item.col));
+    if (slot === 'values') {
+      const sel = document.createElement('select');
+      for (const a of aggOptions(meta.role)) sel.append(new Option(AGG_LABEL[a], a));
+      sel.value = item.agg;
+      sel.onchange = () => { item.agg = sel.value; save(); refresh(c); renderConfig(); };
+      chip.append(sel);
+    } else if (meta.role === 'date') {
+      const sel = document.createElement('select');
+      for (const b of ['year','quarter','month','week','day']) sel.append(new Option(b, b));
+      sel.value = item.bucket || 'year';
+      sel.onchange = () => { item.bucket = sel.value; save(); refresh(c); };
+      chip.append(sel);
+    }
+    const x = el('span','x','✕');
+    x.onclick = () => { if (slot === 'values') c.values.splice(idx,1); else c[slot] = null;
+                        save(); renderConfig(); renderGrid(); refreshAll(); };
+    chip.append(x);
+    shelf.append(chip);
+  });
+  shelf.ondragover = e => { e.preventDefault(); shelf.classList.add('dragover'); };
+  shelf.ondragleave = () => shelf.classList.remove('dragover');
+  shelf.ondrop = e => {
+    e.preventDefault(); shelf.classList.remove('dragover');
+    const f = dragged(e); if (!f) return;
+    if (f.table !== c.table) { toast(`This chart reads from “${c.table}” — switch tables by dropping on a new chart`); return; }
+    const meta = colMeta(f.table, f.col);
+    if (slot === 'values') c.values.push({ col: f.col, agg: meta.role === 'measure' ? 'sum' : 'count' });
+    else c[slot] = { col: f.col, bucket: meta.role === 'date' ? 'year' : null };
+    save(); renderConfig(); renderGrid(); refreshAll();
+  };
+}
+
+/* =============== global filters =============== */
+function renderFilters() {
+  const box = $('#fchips'); box.innerHTML = '';
+  state.filters.forEach((f, i) => {
+    const chip = el('span','fchip');
+    const summary = f.op === 'between' ? `${f.values[0] || '…'} → ${f.values[1] || '…'}`
+      : f.op === 'contains' ? `contains “${f.values[0]}”`
+      : f.values.length > 2 ? `${f.values.length} selected` : f.values.join(', ') || 'any';
+    chip.innerHTML = `<b>${f.col}</b> ${summary} <span class="x">✕</span>`;
+    chip.querySelector('.x').onclick = e => { e.stopPropagation();
+        state.filters.splice(i,1); save(); renderFilters(); refreshAll(); };
+    chip.onclick = () => openFilterPop(f, chip);
+    box.append(chip);
+  });
+  // subtitles show filter counts — refresh cards' subtitle text cheaply
+  document.querySelectorAll('.card').forEach(card => {
+    const c = getChart(card.dataset.id); if (!c) return;
+    const n = state.filters.filter(f => f.table === c.table).length;
+    card.querySelector('.sub').textContent = c.table + (n ? ` · ${n} filter(s)` : '');
+  });
+}
+
+const fb = $('#filterBar');
+fb.addEventListener('dragover', e => { e.preventDefault(); fb.classList.add('dragover'); });
+fb.addEventListener('dragleave', () => fb.classList.remove('dragover'));
+fb.addEventListener('drop', e => { e.preventDefault(); fb.classList.remove('dragover');
+  const f = dragged(e); if (f) addFilter(f.table, f.col); });
+
+$('#addFilter').onclick = e => {
+  const t = tbl(state.table); if (!t) return;
+  openMenuPop(e.target, t.columns.map(c => c.name), col => addFilter(t.name, col));
+};
+
+function addFilter(table, col) {
+  const meta = colMeta(table, col);
+  const f = { table, col, op: meta.role === 'date' || meta.role === 'measure' ? 'between' : 'in', values: [] };
+  state.filters.push(f); save(); renderFilters();
+  const chips = $('#fchips').children;
+  openFilterPop(f, chips[chips.length - 1]);
+}
+
+/* ---- popover machinery ---- */
+const pop = $('#pop');
+function placePop(anchor) {
+  const r = anchor.getBoundingClientRect();
+  pop.style.display = 'flex';
+  pop.style.left = Math.min(r.left, innerWidth - 280) + 'px';
+  pop.style.top  = Math.min(r.bottom + 6, innerHeight - 300) + 'px';
+}
+document.addEventListener('mousedown', e => {
+  if (pop.style.display !== 'none' && !pop.contains(e.target)) pop.style.display = 'none';
+});
+
+function openMenuPop(anchor, items, onPick) {
+  pop.innerHTML = '';
+  const list = el('div','list');
+  items.forEach(it => { const o = el('label','opt', it);
+    o.onclick = () => { pop.style.display = 'none'; onPick(it); }; list.append(o); });
+  pop.append(list); placePop(anchor);
+}
+
+async function openFilterPop(f, anchor) {
+  const meta = colMeta(f.table, f.col);
+  pop.innerHTML = `<div style="font-weight:600;color:var(--ink)">${f.col} <span style="color:var(--muted);font-weight:400">(${f.table})</span></div>`;
+  const apply = () => { save(); renderFilters(); refreshAll(); };
+
+  if (meta.role === 'date') {
+    const lo = el('input'); lo.type = 'date'; lo.value = f.values[0] || '';
+    const hi = el('input'); hi.type = 'date'; hi.value = f.values[1] || '';
+    const done = el('button','btn primary','Apply');
+    done.onclick = () => {
+      if (lo.value && hi.value) { f.op='between'; f.values=[lo.value, hi.value]; }
+      else if (lo.value) { f.op='gte'; f.values=[lo.value]; }
+      else if (hi.value) { f.op='lte'; f.values=[hi.value]; }
+      pop.style.display='none'; apply(); };
+    pop.append(el('div','','From'), lo, el('div','','To'), hi, done);
+  } else if (meta.role === 'measure') {
+    const lo = el('input'); lo.type='number'; lo.placeholder='min'; lo.value = f.values[0] ?? '';
+    const hi = el('input'); hi.type='number'; hi.placeholder='max'; hi.value = f.values[1] ?? '';
+    const done = el('button','btn primary','Apply');
+    done.onclick = () => {
+      if (lo.value !== '' && hi.value !== '') { f.op='between'; f.values=[+lo.value, +hi.value]; }
+      else if (lo.value !== '') { f.op='gte'; f.values=[+lo.value]; }
+      else if (hi.value !== '') { f.op='lte'; f.values=[+hi.value]; }
+      pop.style.display='none'; apply(); };
+    pop.append(lo, hi, done);
+  } else {
+    const search = el('input'); search.type='text'; search.placeholder='Search values…';
+    const list = el('div','list', '<span style="color:var(--muted)">loading…</span>');
+    const done = el('button','btn primary','Apply');
+    pop.append(search, list, done); placePop(anchor);
+    let values = [];
+    try { values = (await api('/api/distinct', { table:f.table, col:f.col })).values; }
+    catch (e) { list.innerHTML = `<span style="color:var(--bad)">${e.message}</span>`; return; }
+    const sel = new Set(f.values.map(String));
+    const paint = () => { list.innerHTML = '';
+      values.filter(v => v.toLowerCase().includes(search.value.toLowerCase()))
+        .slice(0, 150).forEach(v => {
+          const o = el('label','opt');
+          const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = sel.has(v);
+          cb.onchange = () => cb.checked ? sel.add(v) : sel.delete(v);
+          o.append(cb, document.createTextNode(v.length > 42 ? v.slice(0,41)+'…' : v));
+          list.append(o); }); };
+    search.oninput = paint; paint();
+    done.onclick = () => { f.op='in'; f.values=[...sel]; pop.style.display='none'; apply(); };
+    return;                                     // already placed
+  }
+  placePop(anchor);
+}
+
+/* =============== drill-through drawer: rows -> evidence -> PDF page ============ */
+$('#dClose').onclick = () => $('#drawer').style.display = 'none';
+
+async function openDrawer(c) {
+  const d = $('#drawer'); d.style.display = 'flex';
+  $('#dTitle').textContent = 'Loading rows…'; $('#dBody').innerHTML = '';
+  const filters = state.filters.filter(f => f.table === c.table)
+      .map(f => ({ col: f.col, op: f.op, values: f.values }));
+  try {
+    const j = await api('/api/rows', { table: c.table, filters, limit: 200 });
+    $('#dTitle').innerHTML = `<b>${c.table}</b> — ${j.rows.length} row(s)` +
+      (filters.length ? ` · ${filters.length} filter(s) applied` : '') +
+      (j.has_evidence ? ' · <span style="color:var(--accent)">click a row to see its source evidence</span>' : '');
+    const table = el('table');
+    table.innerHTML = `<thead><tr>${j.columns.map(h => `<th>${h}</th>`).join('')}</tr></thead>`;
+    const tbody = el('tbody');
+    for (const r of j.rows) {
+      const tr = el('tr', 'datarow');
+      tr.innerHTML = j.columns.map(col => {
+        const v = r[col]; const s = v == null ? '' : String(v);
+        return `<td title="${s.replace(/"/g,'&quot;')}">${s.length > 60 ? s.slice(0,59)+'…' : s}</td>`;
+      }).join('');
+      if (j.has_evidence && r.id != null)
+        tr.onclick = () => toggleEvidence(c, r, tr, j.columns.length);
+      tbody.append(tr);
+    }
+    table.append(tbody); $('#dBody').append(table);
+  } catch (e) { $('#dTitle').textContent = '⚠ ' + e.message; }
+}
+
+async function toggleEvidence(c, row, tr, span) {
+  if (tr._exp) { tr._exp.remove(); tr._exp = null; return; }
+  const ex = el('tr'); const td = el('td');
+  td.colSpan = span; td.innerHTML = '<span style="color:var(--muted)">loading evidence…</span>';
+  ex.append(td); tr.after(ex); tr._exp = ex;
+  try {
+    const j = await api('/api/evidence', { table: c.table, id: row.id });
+    if (!j.chunks.length) { td.innerHTML = '<span style="color:var(--muted)">no linked source chunks</span>'; return; }
+    td.innerHTML = j.chunks.map(ch => {
+      const pg = ch.page_start
+        ? ` p${ch.page_start}${ch.page_end && ch.page_end !== ch.page_start ? '–' + ch.page_end : ''}` : '';
+      const href = `/files/${encodeURIComponent(ch.source)}${ch.page_start ? `#page=${ch.page_start}` : ''}`;
+      const snip = (ch.snippet || '').replace(/</g,'&lt;');
+      return `<div class="ev"><b>${ch.source}</b>${pg}
+        <a href="${href}" target="_blank" rel="noopener">open PDF ↗</a>
+        <div class="snip">${snip}</div></div>`;
+    }).join('');
+  } catch (e) { td.innerHTML = '⚠ ' + e.message; }
+}
+
+/* =============== chat =============== */
+let chatHistory = [];                       // [{role:'user'|'assistant', content}]
+
+$('#chatToggle').onclick = () => {
+  const ch = $('#chat');
+  const closed = ch.classList.toggle('closed');
+  // the collapse offset must match the (resizable) width, not a hardcoded 300px
+  ch.style.marginLeft = closed ? `-${ch.offsetWidth || 300}px` : '';
+};
+
+/* Dashboard / Chat tabs — the chat DOM moves between the side pane and the
+   full-page view, so it is ONE conversation wherever you read it */
+function setView(v) {
+  document.body.classList.toggle('chatview', v === 'chat');
+  document.querySelectorAll('.tab').forEach(t =>
+      t.classList.toggle('on', t.dataset.view === v));
+  const core = $('#chatCore');
+  if (v === 'chat') $('#chatFullWrap').append(core);
+  else $('#chat').append(core);
+  $('#chatLog').scrollTop = 1e9;
+  $('#chatQ').focus();
+}
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => setView(t.dataset.view));
+
+/* drag the divider to resize the chat pane (persisted) */
+(function chatResizer() {
+  const rz = $('#chatResize'), ch = $('#chat');
+  const saved = +localStorage.getItem('studio.chatW');
+  if (saved >= 220 && saved <= 640) ch.style.width = saved + 'px';
+  if (ch.classList.contains('closed'))
+    ch.style.marginLeft = `-${saved >= 220 ? saved : 300}px`;
+  rz.onmousedown = e => {
+    e.preventDefault(); rz.classList.add('active');
+    const move = ev => {
+      const w = Math.max(220, Math.min(640, ev.clientX));
+      ch.style.width = w + 'px';
+    };
+    const up = () => {
+      rz.classList.remove('active');
+      localStorage.setItem('studio.chatW', parseInt(ch.style.width) || 300);
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
+})();
+
+function addMsg(text, cls) { const d = el('div','msg '+cls); d.textContent = text;
+  $('#chatLog').append(d); $('#chatLog').scrollTop = 1e9; return d; }
+/* minimal markdown: **bold**, bullet lines */
+function mdToHtml(s) {
+  const esc = s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const lines = esc.split('\n'); let out = '', inUl = false;
+  for (const ln of lines) {
+    if (/^\s*[-*] /.test(ln)) { if (!inUl) { out += '<ul>'; inUl = true; }
+      out += '<li>' + ln.replace(/^\s*[-*] /,'') + '</li>'; }
+    else { if (inUl) { out += '</ul>'; inUl = false; } out += ln + '<br>'; }
+  }
+  if (inUl) out += '</ul>';
+  return out.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+$('#chatForm').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('#chatQ').value.trim(); if (!q) return;
+  addMsg(q, 'me'); $('#chatQ').value = ''; $('#chatSend').disabled = true;
+  const t = addMsg('…thinking', 'bot');
+  try {
+    const j = await api('/chat', { question: q, dashboard: dashSpec(),
+                                   history: chatHistory.slice(-8) });
+    chatHistory.push({ role:'user', content:q }, { role:'assistant', content:j.answer });
+    t.innerHTML = mdToHtml(j.answer);
+    if (j.sources && j.sources.length) {
+      const d = el('details','srcs',
+        `<summary>${j.sources.length} source chunk(s)</summary>` +
+        j.sources.map(s => `<div><b>${s.source}</b> p${s.page} · sim ${s.similarity}</div>`).join(''));
+      t.append(d);
+    }
+  } catch (err) { t.textContent = '⚠ ' + err.message; }
+  finally { $('#chatSend').disabled = false; }
+};
+
+/* the dashboard, as a compact spec (sent to the chat + AI reviewer) */
+function dashSpec() {
+  return { table: state.table,
+    filters: state.filters,
+    charts: state.charts.map(c => ({ title: c.title || autoTitle(c), type: resolveType(c),
+      table: c.table, x: c.x, color: c.color, values: c.values, sort: c.sort, topN: c.topN })) };
+}
+
+$('#suggest').onclick = async () => {
+  const ch = $('#chat');
+  ch.classList.remove('closed'); ch.style.marginLeft = '';
+  addMsg('How can this dashboard be improved?', 'me');
+  const t = addMsg('…reviewing your dashboard', 'bot');
+  try { const j = await api('/api/suggest', { dashboard: dashSpec() });
+        t.innerHTML = mdToHtml(j.suggestions);
+        chatHistory.push({ role:'user', content:'How can this dashboard be improved?' },
+                         { role:'assistant', content:j.suggestions }); }
+  catch (e) { t.textContent = '⚠ ' + e.message; }
+};
+
+/* =============== PDF export =============== */
+$('#pdf').onclick = async () => {
+  const btn = $('#pdf'); btn.disabled = true; btn.textContent = '…rendering';
+  try {
+    const node = $('#center');
+    const canvas = await html2canvas(node, { backgroundColor: PAGE, scale: 2,
+        ignoreElements: n => n.id === 'addFilter' });
+    const img = canvas.toDataURL('image/png');
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+    pdf.setFillColor(13,13,13); pdf.rect(0, 0, pw, ph, 'F');
+    pdf.setTextColor(255,255,255); pdf.setFontSize(14);
+    pdf.text('Rate-Filing Studio — dashboard', 24, 30);
+    pdf.setTextColor(137,135,129); pdf.setFontSize(9);
+    pdf.text(new Date().toLocaleString(), 24, 44);
+    const iw = pw - 48, ih = canvas.height * iw / canvas.width;
+    let y = 56, remaining = ih, sy = 0;
+    while (remaining > 0) {                          // slice across pages if tall
+      const room = ph - y - 20;
+      const sliceH = Math.min(remaining, room);
+      const srcH = sliceH / iw * canvas.width;
+      const slice = document.createElement('canvas');
+      slice.width = canvas.width; slice.height = srcH;
+      slice.getContext('2d').drawImage(canvas, 0, sy * canvas.width / iw, canvas.width, srcH,
+                                       0, 0, canvas.width, srcH);
+      pdf.addImage(slice.toDataURL('image/png'), 'PNG', 24, y, iw, sliceH);
+      remaining -= sliceH; sy += sliceH;
+      if (remaining > 0) { pdf.addPage();
+        pdf.setFillColor(13,13,13); pdf.rect(0, 0, pw, ph, 'F'); y = 20; }
+    }
+    pdf.save('studio-dashboard.pdf');
+  } catch (e) { toast('PDF failed: ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '⬇ PDF'; }
+};
+
+/* =============== saved dashboards (server-side, shared) =============== */
+$('#saveDash').onclick = e => {
+  pop.innerHTML = '<div style="font-weight:600;color:var(--ink)">Save dashboard to server</div>';
+  const inp = el('input'); inp.type = 'text'; inp.placeholder = 'Dashboard name…';
+  inp.value = state.name || '';
+  const b = el('button','btn primary','Save');
+  const doSave = async () => {
+    const name = inp.value.trim(); if (!name) { inp.focus(); return; }
+    try { await api('/api/dashboards', { name, spec: state });
+          state.name = name; save(); pop.style.display = 'none';
+          toast(`Saved “${name}” — anyone on this server can open it`); }
+    catch (err) { toast('Save failed: ' + err.message); }
+  };
+  b.onclick = doSave; inp.onkeydown = ev => { if (ev.key === 'Enter') doSave(); };
+  pop.append(inp, b); placePop(e.target); inp.focus();
+};
+
+$('#openDash').onclick = async e => {
+  pop.innerHTML = '<span style="color:var(--muted)">loading…</span>'; placePop(e.target);
+  try {
+    const j = await apiGet('/api/dashboards');
+    pop.innerHTML = '<div style="font-weight:600;color:var(--ink)">Open dashboard</div>';
+    if (!j.dashboards.length) {
+      pop.append(el('div','', '<span style="color:var(--muted)">Nothing saved yet — build a view and hit 💾 Save.</span>'));
+      return;
+    }
+    const list = el('div','list');
+    for (const d of j.dashboards) {
+      const o = el('label','opt');
+      o.innerHTML = `<span style="flex:1">${d.name}</span>
+        <span style="color:var(--muted);font-size:11px">${new Date(d.updated_at).toLocaleDateString()}</span>
+        <span class="x" title="Delete">✕</span>`;
+      o.onclick = async ev => {
+        if (ev.target.classList.contains('x')) return;
+        try {
+          const full = await apiGet('/api/dashboards/' + encodeURIComponent(d.name));
+          Object.keys(chartObjs).forEach(destroyChart);
+          state = Object.assign({ charts:[], filters:[], colorMap:{}, seq:1, table:null },
+                                full.spec, { name: d.name });
+          selectedId = null; save();
+          $('#tableSel').value = state.table || ''; renderFields();
+          renderGrid(); renderConfig(); renderFilters(); refreshAll();
+          pop.style.display = 'none'; toast(`Opened “${d.name}”`);
+        } catch (err) { toast('Open failed: ' + err.message); }
+      };
+      o.querySelector('.x').onclick = async ev => {
+        ev.stopPropagation();
+        if (!confirm(`Delete dashboard “${d.name}”?`)) return;
+        try { await apiGet('/api/dashboards/' + encodeURIComponent(d.name), 'DELETE'); o.remove(); }
+        catch (err) { toast('Delete failed: ' + err.message); }
+      };
+      list.append(o);
+    }
+    pop.append(list);
+  } catch (err) { pop.innerHTML = '⚠ ' + err.message; }
+};
+
+/* =============== toolbar =============== */
+$('#addChart').onclick = () => newChart({});
+$('#reset').onclick = () => { if (!confirm('Clear the whole dashboard?')) return;
+  Object.keys(chartObjs).forEach(destroyChart);
+  state.charts = []; state.filters = []; selectedId = null; save();
+  renderGrid(); renderConfig(); renderFilters(); };
+
+/* starter dashboard, generic over whatever table is selected */
+$('#autoBuild').onclick = () => {
+  const t = tbl(state.table); if (!t) return;
+  const dims  = t.columns.filter(c => c.role === 'dimension' && c.name !== 'id' && !c.name.endsWith('_id'));
+  const dates = t.columns.filter(c => c.role === 'date');
+  const meas  = t.columns.filter(c => c.role === 'measure');
+  // best split candidate: a categorical-sounding column (…type, …plan, …unit, status)
+  const split = dims.find(c => /type|plan|unit|status|category/i.test(c.name) )
+             || dims[2] || dims[3];
+  newChart({ type:'stat', title:`Total rows — ${t.name}` });
+  if (dims[1]) newChart({ type:'auto', x:{ col: dims[1].name, bucket:null } });
+  if (dims[1] && split && split.name !== dims[1].name)
+    newChart({ type:'stack', x:{ col: dims[1].name, bucket:null },
+               color:{ col: split.name, bucket:null } });
+  if (dates[0]) newChart({ type:'line', x:{ col: dates[0].name, bucket:'year' } });
+  if (meas[0]) newChart({ type:'auto', x: dims[1] ? { col: dims[1].name, bucket:null } : null,
+                          values:[{ col: meas[0].name, agg:'avg' }], sort:'desc' });
+  selectedId = null; renderGrid(); renderConfig(); refreshAll();
+};
+
+/* =============== boot =============== */
+(function boot() {
+  try { const saved = JSON.parse(localStorage.getItem(LS_KEY));
+        if (saved && saved.charts) state = Object.assign(state, saved); } catch {}
+  loadSchema().then(() => {
+    renderGrid(); renderConfig(); renderFilters(); refreshAll();
+    // open .../#auto to demo: builds the starter dashboard on first load
+    if (location.hash === '#auto' && !state.charts.length) $('#autoBuild').click();
+  });
+})();
+</script>
+</body>
+</html>
