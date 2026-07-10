@@ -76,6 +76,29 @@ Environment (`.env`): `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `LLM_MODEL_EXTRACT`
 `DOCLING_OCR_MIN_CHARS` (50), `DOCLING_OCR_MIN_IMAGE_COVERAGE` (0.5),
 `INPUT_DIR`, `OUTPUT_DIR`.
 
+### Windows notes
+
+No code changes are needed — same commands in PowerShell, with these differences:
+
+```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"   # install uv
+uv venv -p 3.12; uv sync          # installs EasyOCR automatically (not ocrmac)
+Copy-Item .env.example .env       # then fill in OPENAI_API_KEY etc.
+docker compose up -d postgres     # needs Docker Desktop
+uv run uvicorn rate_filing.studio_app:app --port 8010   # Studio
+uv run uvicorn rate_filing.chat_app:app --port 8000     # chat
+```
+
+- **Airflow is not supported natively on Windows** — skip it: uploading a PDF in
+  the chat/Studio page runs the same ingestion pipeline. If you want the
+  watched-folder automation, run `./scripts/run_airflow.sh` inside WSL2.
+- EasyOCR downloads its models (~100 MB) the first time a scanned page is hit,
+  and uses an NVIDIA GPU (CUDA) automatically if one is available.
+- The database starts empty on a new machine: re-ingest your PDFs, or move data
+  with `docker exec rag-postgres pg_dump -U rag rag > rag_backup.sql` on the old
+  machine and `docker exec -i rag-postgres psql -U rag rag < rag_backup.sql` on
+  the new one.
+
 ## Run
 
 ```bash
