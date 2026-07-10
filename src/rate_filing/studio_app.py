@@ -560,7 +560,7 @@ def api_suggest(req: SuggestRequest):
 
 @app.get("/", response_class=HTMLResponse, dependencies=[Depends(_require_auth)])
 def index() -> str:
-    return _HTML.read_text()
+    return _HTML.read_text(encoding="utf-8")   # explicit: Windows defaults to cp1252
 
 
 @app.get("/health")
